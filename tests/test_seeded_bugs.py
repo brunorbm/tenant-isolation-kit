@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine
 
 from examples.common import TenantScoped, make_guard
 from examples.fixed_app.main import create_app as create_fixed_app
@@ -118,21 +119,27 @@ def test_every_seeded_bug_has_an_exploit() -> None:
 
 
 @pytest.mark.parametrize("bug", bug_params)
-def test_exploit_works_on_the_unguarded_vulnerable_app(bug: SeededBug) -> None:
-    assert EXPLOITS[bug.id](make_world(create_vulnerable_app()))
+def test_exploit_works_on_the_unguarded_vulnerable_app(
+    bug: SeededBug, new_engine: Callable[[], Engine]
+) -> None:
+    assert EXPLOITS[bug.id](make_world(create_vulnerable_app(new_engine())))
 
 
 @pytest.mark.parametrize("strict", [False, True], ids=["permissive", "strict"])
 @pytest.mark.parametrize("guarded", [False, True], ids=["bare", "guarded"])
 @pytest.mark.parametrize("bug", bug_params)
-def test_exploit_fails_on_the_fixed_app(bug: SeededBug, guarded: bool, strict: bool) -> None:
+def test_exploit_fails_on_the_fixed_app(
+    bug: SeededBug, guarded: bool, strict: bool, new_engine: Callable[[], Engine]
+) -> None:
     guard = make_guard(strict=strict) if guarded else None
-    assert not EXPLOITS[bug.id](make_world(create_fixed_app(guard=guard)))
+    assert not EXPLOITS[bug.id](make_world(create_fixed_app(new_engine(), guard=guard)))
 
 
 @pytest.mark.parametrize("bug", bug_params)
-def test_strict_guard_catches_the_bugs_the_catalog_says_it_catches(bug: SeededBug) -> None:
-    world = make_world(create_vulnerable_app(guard=make_guard(strict=True)))
+def test_strict_guard_catches_the_bugs_the_catalog_says_it_catches(
+    bug: SeededBug, new_engine: Callable[[], Engine]
+) -> None:
+    world = make_world(create_vulnerable_app(new_engine(), guard=make_guard(strict=True)))
     if bug.guard:
         with pytest.raises(TenantIsolationError):
             EXPLOITS[bug.id](world)
@@ -148,10 +155,12 @@ PERMISSIVE_RAISES = {"V6"}
 
 
 @pytest.mark.parametrize("bug", bug_params)
-def test_permissive_guard_contains_and_reports(bug: SeededBug) -> None:
+def test_permissive_guard_contains_and_reports(
+    bug: SeededBug, new_engine: Callable[[], Engine]
+) -> None:
     violations: list[Violation] = []
     guard = TenantGuard([TenantScoped], strict=False, on_violation=violations.append)
-    world = make_world(create_vulnerable_app(guard=guard))
+    world = make_world(create_vulnerable_app(new_engine(), guard=guard))
     assert violations == []  # the owner's own requests are clean
     if bug.id in PERMISSIVE_RAISES:
         with pytest.raises(CrossTenantWriteError):
@@ -167,9 +176,9 @@ def _run(case: Case, pair: TenantPair) -> bool:
     return bool(case.run(pair))
 
 
-def test_matrix_reports_exactly_the_cataloged_cases() -> None:
-    cases = build_cases([NOTES, INVOICES], discover_routes(create_vulnerable_app()))
-    failing = {c.id for c in cases if _run(c, pair_for(create_vulnerable_app()))}
+def test_matrix_reports_exactly_the_cataloged_cases(new_engine: Callable[[], Engine]) -> None:
+    cases = build_cases([NOTES, INVOICES], discover_routes(create_vulnerable_app(new_engine())))
+    failing = {c.id for c in cases if _run(c, pair_for(create_vulnerable_app(new_engine())))}
     assert failing == {case_id for bug in SEEDED_BUGS for case_id in bug.matrix}
 
 
