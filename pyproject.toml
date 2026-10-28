@@ -94,6 +94,8 @@ warn_unreachable = true
 line-length = 100
 target-version = "py310"
 src = ["src", "tests", "."]
+# Semgrep fixtures: annotations are line-based, so formatting would move them.
+extend-exclude = ["semgrep"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "S", "BLE", "C4", "SIM", "RUF", "PT", "TRY", "PL"]
@@ -109,4 +111,3 @@ ignore = [
 "examples/vulnerable_app/**" = ["S608"]
 "examples/**" = ["S105"]
 "scripts/**" = ["S101", "S603"]
-"semgrep/**" = ["ALL"]
