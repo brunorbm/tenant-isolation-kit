@@ -36,6 +36,7 @@ import re
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, cast
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import Table, event, inspect
 from sqlalchemy.orm import Mapper, ORMExecuteState, Session, sessionmaker, with_loader_criteria
@@ -109,6 +110,15 @@ def _conjuncts(clause: ClauseElement | None) -> Iterator[ClauseElement]:
             yield from _conjuncts(term)
     else:
         yield clause
+
+
+#: Mapped attribute holding the tenant column, per scoped class (see ``_scoped``).
+_TENANT_ATTRS: WeakKeyDictionary[type[Any], str] = WeakKeyDictionary()
+
+
+def _tenant_attribute(entity: Any) -> Any:
+    """``entity.<tenant attribute>``; ``entity`` is the class or SQLAlchemy's wrapper of it."""
+    return getattr(entity, _TENANT_ATTRS[entity.__mapper__.class_])
 
 
 def _bind_value(element: ClauseElement) -> object:
@@ -247,14 +257,15 @@ class TenantGuard:
                 f"bound to the session: {_short_sql(statement)}"
             )
 
+        if state.is_insert:
+            # INSERT has no WHERE clause to check; the inserted values must be ours.
+            self._check_insert_params(statement, touched, registry, tenant, state.parameters)
+            return
         corrected = not text_hits and self._can_scope(statement, touched, registry)
         if not state.is_relationship_load:
             self._check_predicates(statement, touched, registry, tenant, corrected=corrected)
         for clause in text_hits:
             self._check_text(clause, registry, tenant, state.parameters)
-        if state.is_insert:
-            self._check_insert_params(touched, registry, tenant, state.parameters)
-            return
         if state.is_executemany and (state.is_update or state.is_delete):
             # ORM bulk UPDATE/DELETE by primary key cannot synchronize the identity map
             # once extra WHERE criteria are present.
@@ -414,17 +425,24 @@ class TenantGuard:
 
     def _check_insert_params(
         self,
+        statement: ClauseElement,
         touched: set[int],
         registry: Mapping[int, _TenantTable],
         tenant: Hashable,
         parameters: object,
     ) -> None:
         names = sorted(registry[k].table.name for k in touched)
-        for params in self._param_sets(parameters):
-            value = params.get(self.column, _UNKNOWN)
+        values = [params.get(self.column, _UNKNOWN) for params in self._param_sets(parameters)]
+        # Values embedded in the statement: insert(...).values(tenant_id=...), including
+        # multi-row VALUES, whose parameters are named <column>_m0, <column>_m1, ...
+        embedded = re.compile(rf"{re.escape(self.column)}(_m\d+)?")
+        if not values:  # executemany parameters and embedded values do not mix
+            compiled = statement.compile()
+            values = [v for k, v in compiled.params.items() if embedded.fullmatch(k)]
+        for value in values:
             if self._is_foreign(value, tenant):
                 raise CrossTenantWriteError(
-                    f"bulk insert into {', '.join(names)} with {self.column}={value!r}, "
+                    f"insert into {', '.join(names)} with {self.column}={value!r}, "
                     f"but the session is bound to tenant {tenant!r}"
                 )
 
@@ -456,10 +474,17 @@ class TenantGuard:
             if target in registry:
                 statement = statement.where(registry[target].column == tenant)
             return statement
+        classes = [cls for key in sorted(touched) for cls in registry[key].classes]
+        for cls in classes:
+            _TENANT_ATTRS[cls] = self._attr(cls)
+        # The criteria must be a lambda: a plain expression is not adapted to aliased()
+        # entities. SQLAlchemy caches the lambda by code location and tracks ``tenant``
+        # as a bound parameter, so the attribute name is looked up from a global.
         options = [
-            with_loader_criteria(cls, getattr(cls, self._attr(cls)) == tenant, include_aliases=True)
-            for key in sorted(touched)
-            for cls in registry[key].classes
+            with_loader_criteria(
+                cls, lambda entity: _tenant_attribute(entity) == tenant, include_aliases=True
+            )
+            for cls in classes
         ]
         if options and hasattr(statement, "options"):
             statement = statement.options(*options)
