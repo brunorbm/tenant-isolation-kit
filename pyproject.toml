@@ -106,7 +106,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "S608", "PLC0415", "BLE001", "TRY", "PT011"]
+"tests/**" = [
+    "S101", "S105", "S106", "S603", "S608", "PLC0415", "BLE001", "TRY", "PT011",
+]
 # The vulnerable app is vulnerable on purpose; the seeded bugs must survive linting.
 "examples/vulnerable_app/**" = ["S608"]
 "examples/**" = ["S105"]

@@ -91,7 +91,7 @@ SEEDED_BUGS: tuple[SeededBug, ...] = (
         "V7",
         "POST /invoices/mark-paid",
         "mark_paid",
-        "bulk `Invoice.__table__.update()` filtered by id only",
+        "bulk Core `table.update()` filtered by id only",
         "CWE-639",
         (),
         (),
