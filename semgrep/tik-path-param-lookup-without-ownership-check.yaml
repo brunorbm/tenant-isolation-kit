@@ -1,0 +1,60 @@
+rules:
+  - id: tik-path-param-lookup-without-ownership-check
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Route handler `$FUNC` uses the path parameter `$PARAM` in a database call but
+      never mentions `tenant_id`. A caller can change
+      `$PARAM` to reach another tenant's object (IDOR/BOLA).
+    metadata:
+      category: security
+      subcategory: [audit]
+      cwe:
+        - "CWE-639: Authorization Bypass Through User-Controlled Key"
+        - "CWE-284: Improper Access Control"
+      owasp:
+        - "API1:2023 - Broken Object Level Authorization"
+      confidence: LOW
+      likelihood: MEDIUM
+      impact: HIGH
+      references:
+        - https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/
+      tradeoffs: >-
+        Heuristic, scoped to FastAPI-style decorators on routes with a `{...}` path.
+        Handlers that delegate the lookup to a helper (`own_note(session, principal,
+        id)`) are not matched at all, which is the recommended shape. FP: handlers
+        that query by id and then check ownership through something other than
+        `tenant_id` (a membership table, a policy engine); add `# nosemgrep` with a
+        reason. FN: id parameters
+        not named `id`/`*_id`/`*_uuid`/`pk`, handlers that mention `tenant_id` for
+        an unrelated reason, and data access hidden behind repository methods.
+    patterns:
+      - pattern-inside: |
+          @$APP.$METHOD($PATH, ...)
+          def $FUNC(..., $PARAM: $TYPE, ...):
+              ...
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(get|put|patch|delete|post|api_route)$
+      - metavariable-regex:
+          metavariable: $PATH
+          regex: .*\{
+      - metavariable-regex:
+          metavariable: $PARAM
+          regex: ^(?!tenant_id$)(id|pk|\w+_id|\w+_uuid)$
+      - pattern-either:
+          - pattern: $SESSION.get($MODEL, <... $PARAM ...>, ...)
+          - pattern: $SESSION.execute(<... $PARAM ...>, ...)
+          - pattern: $SESSION.scalars(<... $PARAM ...>, ...)
+          - pattern: $SESSION.scalar(<... $PARAM ...>, ...)
+          - pattern: $SESSION.query(...).$FILTER(<... $PARAM ...>, ...)
+      - pattern-not-inside: |
+          def $FUNC(...):
+              ...
+              $X.tenant_id
+              ...
+      - pattern-not-inside: |
+          def $FUNC(...):
+              ...
+              <... $X.tenant_id ...>
+              ...

@@ -1,0 +1,36 @@
+rules:
+  - id: tik-raw-sql-without-tenant-predicate
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Raw SQL reads or writes a table but never mentions `tenant_id`. ORM-level
+      tenant filters (`with_loader_criteria`, the runtime guard's injection) do not
+      apply to textual SQL, so this statement sees every tenant's rows. Add
+      `WHERE tenant_id = :tenant_id` and bind the caller's tenant.
+    metadata:
+      category: security
+      subcategory: [audit]
+      cwe:
+        - "CWE-284: Improper Access Control"
+        - "CWE-639: Authorization Bypass Through User-Controlled Key"
+      owasp:
+        - "API1:2023 - Broken Object Level Authorization"
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: HIGH
+      references:
+        - https://docs.sqlalchemy.org/en/20/core/sqlelement.html#sqlalchemy.sql.expression.text
+      tradeoffs: >-
+        Matches string literals only. FP: SQL on tables that are not tenant-owned;
+        a tenant column with another name (copy the rule and change `tenant_id`).
+        FN: SQL assembled from variables or f-strings, INSERT statements, and SQL
+        that mentions `tenant_id` without actually filtering on it (for example
+        only in the SELECT list). The runtime guard checks the bound value.
+    patterns:
+      - pattern-either:
+          - pattern: text("$SQL", ...)
+          - pattern: sqlalchemy.text("$SQL", ...)
+          - pattern: $CONN.exec_driver_sql("$SQL", ...)
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: (?is)^(?!.*\btenant_id\b)\s*(select\b.*\bfrom\b|update\b|delete\b|with\b)

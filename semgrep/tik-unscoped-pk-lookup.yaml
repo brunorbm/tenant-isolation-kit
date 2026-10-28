@@ -1,0 +1,55 @@
+rules:
+  - id: tik-unscoped-pk-lookup
+    languages: [python]
+    severity: WARNING
+    message: >-
+      `$MODEL` is looked up by primary key without a tenant predicate or a later
+      ownership check. If `$MODEL` is tenant-owned, any authenticated user who knows
+      or guesses an id can reach another tenant's row (IDOR/BOLA). Add
+      `$MODEL.tenant_id == <caller's tenant>` to the query, or check
+      `obj.tenant_id` before using the object.
+    metadata:
+      category: security
+      subcategory: [audit]
+      cwe:
+        - "CWE-639: Authorization Bypass Through User-Controlled Key"
+      owasp:
+        - "API1:2023 - Broken Object Level Authorization"
+        - "A01:2021 - Broken Access Control"
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: HIGH
+      references:
+        - https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/
+        - https://cwe.mitre.org/data/definitions/639.html
+      tradeoffs: >-
+        FP: models that are not tenant-owned (global catalogs, the tenant table
+        itself) and lookups whose ownership check happens in another function.
+        FN: queries built across several statements, lookups by a non-`id` key,
+        and ownership checks that compare something other than `tenant_id`.
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: $SESSION.get($MODEL, $ID, ...)
+              - metavariable-regex:
+                  metavariable: $SESSION
+                  regex: (?i)(session|db|sess|uow)$
+          - pattern: $SESSION.query($MODEL).get($ID)
+          - pattern: select($MODEL).where(..., $MODEL.id == $ID, ...)
+          - pattern: select($MODEL).filter(..., $MODEL.id == $ID, ...)
+          - pattern: select($MODEL).filter_by(..., id=$ID, ...)
+          - pattern: $SESSION.query($MODEL).filter(..., $MODEL.id == $ID, ...)
+          - pattern: $SESSION.query($MODEL).filter_by(..., id=$ID, ...)
+      - metavariable-regex:
+          metavariable: $MODEL
+          regex: ^[A-Z]\w*$
+      # A tenant predicate anywhere in the same query chain scopes it.
+      - pattern-not-inside: $Q.where(..., $MODEL.tenant_id == $T, ...)
+      - pattern-not-inside: $Q.filter(..., $MODEL.tenant_id == $T, ...)
+      - pattern-not-inside: $Q.filter_by(..., tenant_id=$T, ...)
+      # An ownership check on the loaded object later in the same block.
+      - pattern-not-inside: |
+          $OBJ = $LOOKUP
+          ...
+          if <... $OBJ.tenant_id ...>:
+              ...

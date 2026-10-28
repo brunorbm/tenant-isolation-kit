@@ -1,0 +1,75 @@
+rules:
+  - id: tik-tenant-id-from-request
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >-
+      The tenant used to scope this query or new row comes from the request
+      (a parameter, header, query string or body field). Any authenticated user can
+      name another tenant and act inside it. Take the tenant only from the
+      authenticated principal; if a user may legitimately act for several tenants,
+      check membership first (for example with a `require_membership(...)` helper).
+    metadata:
+      category: security
+      subcategory: [vuln]
+      cwe:
+        - "CWE-639: Authorization Bypass Through User-Controlled Key"
+      owasp:
+        - "API1:2023 - Broken Object Level Authorization"
+      confidence: MEDIUM
+      likelihood: HIGH
+      impact: HIGH
+      references:
+        - https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/
+        - https://cwe.mitre.org/data/definitions/639.html
+      tradeoffs: >-
+        Sources are recognised by name: handler parameters called `tenant`,
+        `tenant_id` or `x_tenant_id`, `<body>.tenant_id` on body-like names
+        (`payload`, `body`, `data`, `*_in`...), and Starlette `request.headers`,
+        `request.query_params` and `request.json()`. FP: a membership check the rule
+        does not recognise (name helpers `ensure_*`, `require_*`, `check_*` or
+        `authorize*`, which are treated as sanitizers), or an admin-only handler.
+        FN: other names for the tenant parameter or body, and tenants resolved
+        indirectly (a project id from the request whose tenant is then trusted).
+        The matrix's forge-* cases and the guard's CrossTenant* errors catch those.
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              def $HANDLER(..., $PARAM, ...):
+                  ...
+          - focus-metavariable: $PARAM
+          - metavariable-regex:
+              metavariable: $PARAM
+              regex: ^(x_)?tenant(_id)?\b
+      - patterns:
+          - pattern: $BODY.tenant_id
+          - metavariable-regex:
+              metavariable: $BODY
+              regex: ^(payload|body|data|form|item|params|query|req|request|\w+_in|\w+_payload|\w+_body)$
+      - pattern: $REQUEST.headers
+      - pattern: $REQUEST.query_params
+      - pattern: $REQUEST.path_params
+      - pattern: await $REQUEST.json()
+    pattern-sanitizers:
+      - by-side-effect: true
+        patterns:
+          - pattern: $CHECK(..., $X, ...)
+          - metavariable-regex:
+              metavariable: $CHECK
+              regex: ^(.*\.)?(ensure_|require_|check_|authorize)\w*$
+          - focus-metavariable: $X
+    pattern-sinks:
+      - patterns:
+          - pattern: $CALL(..., tenant_id=$VALUE, ...)
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern-either:
+              - pattern: $MODEL.tenant_id == $VALUE
+              - pattern: $VALUE == $MODEL.tenant_id
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern: $OBJ.tenant_id = $VALUE
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern: $Q.filter_by(..., tenant_id=$VALUE, ...)
+          - focus-metavariable: $VALUE

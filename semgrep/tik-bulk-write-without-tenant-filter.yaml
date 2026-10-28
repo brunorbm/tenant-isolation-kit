@@ -1,0 +1,49 @@
+rules:
+  - id: tik-bulk-write-without-tenant-filter
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Bulk write on `$MODEL` without a tenant predicate. A Core/ORM-enabled
+      UPDATE or DELETE runs as one SQL statement: it is not limited to objects the
+      caller loaded, and a filter by id alone lets one tenant modify or delete
+      another tenant's rows. Add `$MODEL.tenant_id == <caller's tenant>` to the
+      WHERE clause.
+    metadata:
+      category: security
+      subcategory: [audit]
+      cwe:
+        - "CWE-639: Authorization Bypass Through User-Controlled Key"
+        - "CWE-284: Improper Access Control"
+      owasp:
+        - "API1:2023 - Broken Object Level Authorization"
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: HIGH
+      references:
+        - https://docs.sqlalchemy.org/en/20/orm/queryguide/dml.html
+      tradeoffs: >-
+        FP: statements whose tenant predicate is added in a later statement
+        (`stmt = stmt.where(...)`) or by a helper, and models that are not
+        tenant-owned. FN: writes through the table object (`Model.__table__.update()`,
+        `metadata.tables[...]`, reflected tables) and raw SQL (see
+        tik-raw-sql-without-tenant-predicate); there are too many spellings of a
+        table for a syntactic rule, which is why the runtime guard keys on the table
+        actually executed.
+    patterns:
+      - pattern-either:
+          - pattern: update($MODEL)
+          - pattern: delete($MODEL)
+          - pattern: sqlalchemy.update($MODEL)
+          - pattern: sqlalchemy.delete($MODEL)
+          - pattern: $SESSION.query($MODEL).update(...)
+          - pattern: $SESSION.query($MODEL).delete(...)
+          - pattern: $SESSION.query($MODEL).$FILTER(...).update(...)
+          - pattern: $SESSION.query($MODEL).$FILTER(...).delete(...)
+      - metavariable-regex:
+          metavariable: $MODEL
+          regex: ^[A-Z]\w*$
+      - pattern-not-inside: $Q.where(..., $MODEL.tenant_id == $T, ...)
+      - pattern-not-inside: $Q.filter(..., $MODEL.tenant_id == $T, ...)
+      - pattern-not-inside: $Q.filter_by(..., tenant_id=$T, ...)
+      - pattern-not: $SESSION.query($MODEL).filter(..., $MODEL.tenant_id == $T, ...).$WRITE(...)
+      - pattern-not: $SESSION.query($MODEL).filter_by(..., tenant_id=$T, ...).$WRITE(...)
