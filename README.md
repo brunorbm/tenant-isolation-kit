@@ -68,8 +68,9 @@ once:
 ```python
 from tenant_isolation_kit import TENANT_INFO_KEY, TenantGuard
 
-guard = TenantGuard([TenantScoped], strict=True)   # TenantScoped: your abstract base
-guard.install(SessionLocal)                         # a sessionmaker, or a Session subclass
+guard = TenantGuard([TenantScoped], strict=True)  # TenantScoped: your abstract base
+guard.install(SessionLocal)  # a sessionmaker, or a Session subclass
+
 
 def get_session(principal: CurrentPrincipal) -> Iterator[Session]:
     with SessionLocal(info={TENANT_INFO_KEY: principal.tenant_id}) as session:
@@ -89,12 +90,13 @@ with two clients that are authenticated as different tenants:
 ```python
 from tenant_isolation_kit import Resource, Tenant, TenantPair
 
-NOTES = Resource("note", "/notes", create=lambda canary: {"body": canary},
-                 tenant_field="tenant_id")
+NOTES = Resource("note", "/notes", create=lambda canary: {"body": canary}, tenant_field="tenant_id")
+
 
 @pytest.fixture
 def tenant_pair() -> TenantPair:
     return TenantPair(a=Tenant("acme", alice_client), b=Tenant("globex", bob_client))
+
 
 @pytest.mark.tenant_matrix(app=app, resources=[NOTES])
 def test_cross_tenant(cross_tenant_case, tenant_pair):
